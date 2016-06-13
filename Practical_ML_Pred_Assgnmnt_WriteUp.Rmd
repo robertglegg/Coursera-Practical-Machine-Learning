@@ -1,0 +1,118 @@
+---
+title: 'Practical Machine Learning: Prediction Assignment Write-Up'
+author: "Robert Legg"
+date: "June 13, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(randomForest)
+library(caret)
+```
+
+## Objective
+
+Our goal for this project is to predict how well a subject performs a bicep curl using data taken from the person's body and the dumbbell he or she is using. The data is collected from accelerometers attached to the person's forearm, arm, and belt, as well as to the dumbbell. We will attempt to classify the performance of the bicep curl in one of 5 ways:
+
+A - exactly according to specification
+
+B - throwing the elbows to the front
+
+C - lifting the dumbbell only halfway
+
+D - lowering the dumbbell only halfway
+
+E - throwing the hips to the front
+ 
+The data was collected and provided by: http://groupware.les.inf.puc-rio.br/har.
+
+## Exploring the Data
+
+We first read in the data and examine its structure, its dimensions, and any missing values.
+
+```{r reading data, echo= TRUE}
+train <- read.csv("~/Coursera/MachineLearning/pml-training.csv")
+test <- read.csv("~/Coursera/MachineLearning/pml-testing.csv")
+```
+
+We notice that the training set consists of 19622 observations of 160 variables. The outcome we are interested in predicting is the column called "classe". The test set consists of 20 observations. 
+
+We immediately see that there is a lot of missing data, in both the training and test sets. In fact there are 67 predictors in the training set that have 19216 out of 19622 values missing:
+
+```{r NAs train, echo = TRUE}
+NAs_train <- apply(train, MARGIN = 2, FUN = function(x) sum(is.na(x)))
+sum(NAs_train == 19216)
+```
+
+And there are 100 predictors in the test set that have all 20 values missing:
+
+```{r NAs test, echo = TRUE}
+NAs_test <- apply(test, MARGIN = 2, FUN = function(x) sum(is.na(x)))
+sum(NAs_test == 20)
+```
+
+Whatever the cause for this missing data, we know at least that any prediction using the test set cannot depend on these 100 predictors. Thus, we might as well remove these predictors from the test and training set.
+
+```{r remove predictors, echo = TRUE}
+bad_predictors_test <- which(NAs_test == 20)
+train <- train[,-bad_predictors_test]
+test <- test[,-bad_predictors_test]
+```
+
+We have thus reduced the test and training sets to 59 predictors from 159. Taking a look at what remains, we see that we have a lot of numerical data recorded from the accelerometers, preceded by 7 columns of data containing information about the subject performing the test, the time, etc. As we want to use only the physical information collected from the sensors to predict the exercise performance, we eliminate these columns from our training and test sets:
+
+```{r remove extraneous data, echo = TRUE}
+train <- train[,-c(1:7)]
+test <- test[,-c(1:7)]
+```
+
+We are now left with 52 numeric predictors with which to predict the one outcome.
+
+## Choosing and Fitting a Model: Random Forest
+
+Since this is a multiple classification problem in which the scale of the data apparently varies widely from predictor to predictor, it seems reasonable to first try a random forest, as this will require a minimum of pre-processing and can often yield a good initial benchmark.
+
+```{r random forest model, echo = TRUE}
+set.seed(1)
+rf.model <- randomForest(classe ~ ., data = train, ntree = 500, mtry = 7)
+rf.model
+```
+
+In fact, we see that the performance of this model is very good: it yields an out-of-bag misclassification rate of .32%; in other words, we would expect the model to correctly classify about 299 out of 300 test observations. This suggests that the data being collected does a very good job of separating and identifying exercise performance.
+
+## Performing Cross-Validation
+
+We will now confirm the out-of-bag estimate by using cross-validation to obtain another estimate of test error rate. We write a simple function to perform 10-fold cross validation. We use 'createFolds' function from the caret package.
+
+```{r cross-validation, echo = TRUE}
+perform_validation <- function(num_trees = 500, try = 7){
+  correctly_classified = 0    
+  folds <- createFolds(1:nrow(train), k = 10)   ## create 10 folds 
+  for(i in folds){        
+    ## fit a random forest on all but the ith fold:
+    rf.fit <- randomForest(classe ~., data = train[-i,], ntree = num_trees, mtry = try)
+    ## predict the ith fold using this model:
+    preds <- predict(rf.fit, newdata = train[i,])
+    ## count how samples many were correctly predicted:
+    correctly_classified <- correctly_classified + sum(preds == train[i,]$classe)
+  }
+  ## return the misclassification rate:
+  return(1 - correctly_classified / nrow(train) )
+}
+set.seed(1)
+perform_validation()
+```
+
+We see that the misclassification rate obtained through 10-fold cross-validation is .34% and indeed accords with the out-of-bag error rate obtained above. Since the expected test misclassification rate is so low, we are satisfied with the random forest model.
+
+## Predictions
+
+We now use the random forest model to predict the classification of the exercise performance for the test set:
+
+```{r test-set prediction, echo = TRUE}
+preds <- predict(rf.model, newdata = test)
+preds
+```
+
+
